@@ -1,0 +1,57 @@
+---
+title: "Stats 480 Graded HW 3"
+author: "Nicholas Chang"
+date: "2025-03-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+
+TempData <- read.table("temps.txt", header = FALSE, sep = "", stringsAsFactors = FALSE)
+
+# Column Names
+colnames(TempData) <- c('Station', 'JT', 'JP', 'FT', 'FP', 'MT', 'MP', 'AT', 'AP', 'MaT', 'MaP')
+
+# January and March
+TempData <- TempData %>% select(Station, JP, MP)
+
+# Data Cleaning
+TempData$JP <- as.numeric(TempData$JP)
+TempData$MP <- as.numeric(TempData$MP)
+TempData <- na.omit(TempData)
+
+# Sample 30 stations
+set.seed(12345)
+sample_data <- TempData %>% sample_n(30)
+
+# Means
+mean_jan <- mean(sample_data$JP)
+mean_mar <- mean(sample_data$MP)
+
+# Ratio
+ratio <- mean_mar / mean_jan
+
+# Standard Deviations
+std_jan <- sd(sample_data$JP)
+std_mar <- sd(sample_data$MP)
+
+# Standard Error of the Ratio
+se_ratio <- ratio * sqrt((std_mar / mean_mar)^2 + (std_jan / mean_jan)^2)
+
+# Margin of Error for the Ratio (95% confidence level, z = 1.96)
+moe_ratio <- 1.96 * se_ratio
+
+# Standard Error and Margin of Error for Average March Precipitation
+se_mar <- std_mar / sqrt(30)
+moe_mar <- 1.96 * se_mar
+
+ratio
+moe_ratio
+mean_mar
+moe_mar
+```
