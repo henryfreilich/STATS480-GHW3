@@ -1,95 +1,92 @@
----
-title: "new ratio 3"
-output:
-  pdf_document: default
-  html_document: default
-date: "2025-03-13"
----
+
+# 2.  Use ratio and regression estimation based on auxiliary variable "Votes" to
+# estimate the mean number of eforensics-fraudulent votes (variable
+# "Nfraudmean"), for one of the populations that have data in a file *fv.csv.
+# Design for a bound of B=5 (when designing the sample you may treat population
+# variables "NVoters", "NValid" and "Votes" as known).  Compare the bounds on the
+# error of estimation achieved using the two methods.
+ 
+# work with California 2006 data
+
+
 
 ```{r}
-set.seed(161)
-
 library(dplyr)
 library(survey)
 
-# Load the dataset
-fv_data <- read.csv("/Users/saminaniazinuzhat/Downloads/California2006GOVfv.csv")
+set.seed(161)
+dat <- read.csv("/Users/saminaniazinuzhat/Downloads/California2006GOVfv.csv", row.names=1)
 
-# Check column names
-colnames(fv_data)
-```
-
-```{r}
-# Create Stratum Variable
-fv_data <- fv_data %>%
-  mutate(Stratum = case_when(
-    Votes < 100 ~ "Low Votes",
-    Votes >= 100 & Votes < 500 ~ "Medium Votes",
-    Votes >= 500 ~ "High Votes",
+dat <- dat %>%
+  mutate(stratum = case_when(
+    cname %in% c("Group1_Stratum1", "Group2_Stratum1") ~ "Stratum1",
+    cname %in% c("Group1_Stratum2", "Group2_Stratum2") ~ "Stratum2",
     TRUE ~ "Other"
   ))
 
-# Check strata distribution
-table(fv_data$Stratum)
+small_strata <- dat %>%
+  count(stratum) %>%
+  filter(n < 35) %>%
+  pull(stratum)
 
-# Calculate sample sizes for stratified sampling
-strata_sizes <- fv_data %>%
-  count(Stratum) %>%
-  mutate(sample_size = round((n / sum(n)) * 1500))
-```
+dat <- dat %>%
+  mutate(stratum_combined = ifelse(stratum %in% small_strata, "Combined", stratum))
 
-```{r}
-# Create Stratum Variable
-fv_data <- fv_data %>%
-  mutate(Stratum = case_when(
-    Votes < 100 ~ "Low Votes",
-    Votes >= 100 & Votes < 500 ~ "Medium Votes",
-    Votes >= 500 ~ "High Votes"
-  ))
+# Population sizes
+N <- nrow(dat)
+Ns <- table(dat$stratum_combined)
 
-# Check strata distribution
-table(fv_data$Stratum)
+# Sample sizes (n = 1500 total)
+n <- 1500
+ns <- round((n/N) * Ns)
+ns[which.max(ns)] <- ns[which.max(ns)] + (n - sum(ns)) # Adjust to get exact n
 
-# Calculate sample sizes for stratified sampling
-strata_sizes <- fv_data %>%
-  count(Stratum, name = "N") %>%
-  mutate(sample_size = round((N / sum(N)) * 1500))
-
-# Perform Stratified Sampling (Fix: Using `filter` and `sample_n()`)
-stratified_sample <- fv_data %>%
-  inner_join(strata_sizes, by = "Stratum") %>%  # Attach sample sizes
-  group_by(Stratum) %>%
-  sample_n(size = first(sample_size), replace = FALSE) %>%  # Use first() to get single value
+# Take stratified sample
+sampled_data <- dat %>%
+  group_by(stratum_combined) %>%
+  sample_n(size = ns[as.character(first(stratum_combined))], replace = FALSE) %>%
   ungroup()
 
-# Compute Combined Ratio Estimate
-ratio_estimator_combined <- sum(stratified_sample$Nfraudmean) / sum(stratified_sample$Votes)
+ybar <- tapply(sampled_data$Nfraudmean, sampled_data$stratum_combined, mean)
+xbar <- tapply(sampled_data$Votes, sampled_data$stratum_combined, mean)
+mux <- tapply(dat$Votes, dat$stratum_combined, mean)
 
-# Compute Separate Ratio Estimates for Each Stratum
-ratio_estimators_separate <- stratified_sample %>%
-  group_by(Stratum) %>%
-  summarise(Ratio = sum(Nfraudmean) / sum(Votes), .groups = "drop")
+r_separate <- ybar / xbar
+hatmuyRS <- sum((Ns/N) * r_separate * mux)
 
-# Define Survey Design for Ratio Estimation
-design <- svydesign(id = ~1, strata = ~Stratum, data = stratified_sample)
+sr2 <- sapply(names(ybar), function(j) {
+  sj <- sampled_data[sampled_data$stratum_combined == j, ]
+  sum((sj$Nfraudmean - r_separate[j] * sj$Votes)^2) / (ns[j] - 1)
+})
 
-# Compute Ratio Estimation and Confidence Interval
-ratio_est <- svyratio(~Nfraudmean, ~Votes, design)
-conf_int <- confint(ratio_est)
+hatvarmuyRS <- sum((Ns/N)^2 * ((Ns - ns)/Ns) * sr2/ns)
+boundmuyRS <- 2 * sqrt(hatvarmuyRS)
 
-# Simple Random Sampling (SRS) for Comparison
-srs_sample <- fv_data %>% sample_n(1500, replace = FALSE)
-srs_ratio_est <- sum(srs_sample$Nfraudmean) / sum(srs_sample$Votes)
-srs_se <- sd(srs_sample$Nfraudmean) / sqrt(nrow(srs_sample))
+ybarst <- sum((Ns/N) * ybar)
+xbarst <- sum((Ns/N) * xbar)
+r_combined <- ybarst / xbarst
+hatmuyRC <- r_combined * mean(dat$Votes)
 
-# Print Results
-print(list(
-  "Combined Ratio Estimate" = ratio_estimator_combined,
-  "Separate Ratio Estimates" = ratio_estimators_separate,
-  "Stratified Ratio SE" = sqrt(vcov(ratio_est)),
-  "SRS Estimate" = srs_ratio_est,
-  "SRS SE" = srs_se,
-  "Confidence Interval" = conf_int
-))
+sr2_combined <- sapply(names(ybar), function(j) {
+  sj <- sampled_data[sampled_data$stratum_combined == j, ]
+  sum((sj$Nfraudmean - r_combined * sj$Votes)^2) / (ns[j] - 1)
+})
 
+varhatmuyRC <- sum((Ns/N)^2 * ((Ns - ns)/Ns) * sr2_combined/ns)
+boundmuyRC <- 2 * sqrt(varhatmuyRC)
+
+srs_sample <- sample_n(dat, 1500)
+ybarSRS <- mean(srs_sample$Nfraudmean)
+varybarSRS <- var(srs_sample$Nfraudmean)/1500 * (N - 1500)/N
+SRSbound <- 2 * sqrt(varybarSRS)
+
+# Results
+cat("\nEstimated Mean (Separate Ratio Estimation):", hatmuyRS)
+cat("\nError Bound (Separate Ratio Estimation):", boundmuyRS)
+
+cat("\n\nEstimated Mean (Combined Ratio Estimation):", hatmuyRC)
+cat("\nError Bound (Combined Ratio Estimation):", boundmuyRC)
+
+cat("\n\nEstimated Mean (SRS):", ybarSRS)
+cat("\nError Bound (SRS):", SRSbound)
 ```
