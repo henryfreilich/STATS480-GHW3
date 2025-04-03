@@ -1,4 +1,8 @@
-
+---
+output:
+  pdf_document: default
+  html_document: default
+---
 # 2.  Use ratio and regression estimation based on auxiliary variable "Votes" to
 # estimate the mean number of eforensics-fraudulent votes (variable
 # "Nfraudmean"), for one of the populations that have data in a file *fv.csv.
@@ -12,81 +16,37 @@
 
 ```{r}
 library(dplyr)
-library(survey)
+set.seed(640)
+fv <- read.csv("/Users/saminaniazinuzhat/Downloads/California2006GOVfv.csv")
 
-set.seed(161)
-dat <- read.csv("/Users/saminaniazinuzhat/Downloads/California2006GOVfv.csv", row.names=1)
+N <- nrow(fv)  # Population size
+X_pop <- mean(fv$Votes)  # Population mean of auxiliary variable
 
-dat <- dat %>%
-  mutate(stratum = case_when(
-    cname %in% c("Group1_Stratum1", "Group2_Stratum1") ~ "Stratum1",
-    cname %in% c("Group1_Stratum2", "Group2_Stratum2") ~ "Stratum2",
-    TRUE ~ "Other"
-  ))
 
-small_strata <- dat %>%
-  count(stratum) %>%
-  filter(n < 35) %>%
-  pull(stratum)
+S_y <- sd(fv$Nfraudmean)
 
-dat <- dat %>%
-  mutate(stratum_combined = ifelse(stratum %in% small_strata, "Combined", stratum))
+n_ratio <- ceiling((N * S_y / 5)^2 / (N + (S_y / 5)^2))  # Bound B = 5
+n_ratio <- min(n_ratio, N)  # Ensure sample size does not exceed population size
 
-# Population sizes
-N <- nrow(dat)
-Ns <- table(dat$stratum_combined)
+sample_data <- sample_n(fv, n_ratio)
 
-# Sample sizes (n = 1500 total)
-n <- 1500
-ns <- round((n/N) * Ns)
-ns[which.max(ns)] <- ns[which.max(ns)] + (n - sum(ns)) # Adjust to get exact n
+# sample means
+y_bar <- mean(sample_data$Nfraudmean)  # Sample mean of Nfraudmean
+x_bar <- mean(sample_data$Votes)  # Sample mean of auxiliary variable
 
-# Take stratified sample
-sampled_data <- dat %>%
-  group_by(stratum_combined) %>%
-  sample_n(size = ns[as.character(first(stratum_combined))], replace = FALSE) %>%
-  ungroup()
+# Ratio Estimator
+B_ratio <- y_bar / x_bar  # Ratio of means
+y_hat_ratio <- B_ratio * X_pop  # Estimate of mean Nfraudmean
+se_ratio <- S_y / sqrt(n_ratio)  # Standard error
+bound_ratio <- 1.96 * se_ratio  # 95% confidence bound
 
-ybar <- tapply(sampled_data$Nfraudmean, sampled_data$stratum_combined, mean)
-xbar <- tapply(sampled_data$Votes, sampled_data$stratum_combined, mean)
-mux <- tapply(dat$Votes, dat$stratum_combined, mean)
+# Regression Estimator
+reg_model <- lm(Nfraudmean ~ Votes, data = sample_data)
+B_reg <- coef(reg_model)[2]  # Regression coefficient
+y_hat_reg <- coef(reg_model)[1] + B_reg * X_pop  # Estimate of mean Nfraudmean
+se_reg <- summary(reg_model)$sigma / sqrt(n_ratio)  # Standard error
+bound_reg <- 1.96 * se_reg  # 95% confidence bound
+cat("Ratio Estimation: Estimate =", y_hat_ratio, ", Bound =", bound_ratio, "\n")
+cat("Regression Estimation: Estimate =", y_hat_reg, ", Bound =", bound_reg, "\n")
 
-r_separate <- ybar / xbar
-hatmuyRS <- sum((Ns/N) * r_separate * mux)
-
-sr2 <- sapply(names(ybar), function(j) {
-  sj <- sampled_data[sampled_data$stratum_combined == j, ]
-  sum((sj$Nfraudmean - r_separate[j] * sj$Votes)^2) / (ns[j] - 1)
-})
-
-hatvarmuyRS <- sum((Ns/N)^2 * ((Ns - ns)/Ns) * sr2/ns)
-boundmuyRS <- 2 * sqrt(hatvarmuyRS)
-
-ybarst <- sum((Ns/N) * ybar)
-xbarst <- sum((Ns/N) * xbar)
-r_combined <- ybarst / xbarst
-hatmuyRC <- r_combined * mean(dat$Votes)
-
-sr2_combined <- sapply(names(ybar), function(j) {
-  sj <- sampled_data[sampled_data$stratum_combined == j, ]
-  sum((sj$Nfraudmean - r_combined * sj$Votes)^2) / (ns[j] - 1)
-})
-
-varhatmuyRC <- sum((Ns/N)^2 * ((Ns - ns)/Ns) * sr2_combined/ns)
-boundmuyRC <- 2 * sqrt(varhatmuyRC)
-
-srs_sample <- sample_n(dat, 1500)
-ybarSRS <- mean(srs_sample$Nfraudmean)
-varybarSRS <- var(srs_sample$Nfraudmean)/1500 * (N - 1500)/N
-SRSbound <- 2 * sqrt(varybarSRS)
-
-# Results
-cat("\nEstimated Mean (Separate Ratio Estimation):", hatmuyRS)
-cat("\nError Bound (Separate Ratio Estimation):", boundmuyRS)
-
-cat("\n\nEstimated Mean (Combined Ratio Estimation):", hatmuyRC)
-cat("\nError Bound (Combined Ratio Estimation):", boundmuyRC)
-
-cat("\n\nEstimated Mean (SRS):", ybarSRS)
-cat("\nError Bound (SRS):", SRSbound)
 ```
